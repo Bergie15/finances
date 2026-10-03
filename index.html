@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Finances</title>
+  <meta name="description" content="A private, local-only finance tracker that stores everything in CSV files.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f6f5e'/%3E%3Cpath d='M9 22V14M16 22V9M23 22v-5' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor"/><path d="M9 22V14M16 22V9M23 22v-5" stroke="var(--bg)" stroke-width="3" stroke-linecap="round"/></svg>
+      <span>Finances</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="dashboard" role="tab">Dashboard</button>
+      <button class="tab" data-view="transactions" role="tab">Transactions</button>
+      <button class="tab" data-view="budgets" role="tab">Budgets</button>
+      <button class="tab" data-view="data" role="tab">Data</button>
+    </nav>
+    <div id="save-status" class="save-status" title="Where your data is saved"></div>
+  </header>
+
+  <main>
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view active">
+      <div class="view-head">
+        <h1>Dashboard</h1>
+        <label class="inline">Period
+          <select id="dash-period"></select>
+        </label>
+      </div>
+      <div class="cards">
+        <div class="card stat"><div class="stat-label">Income</div><div id="stat-income" class="stat-value pos">–</div></div>
+        <div class="card stat"><div class="stat-label">Expenses</div><div id="stat-expense" class="stat-value neg">–</div></div>
+        <div class="card stat"><div class="stat-label">Net</div><div id="stat-net" class="stat-value">–</div></div>
+        <div class="card stat"><div class="stat-label">Savings rate</div><div id="stat-rate" class="stat-value">–</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Income vs. expenses <span class="muted small">last 12 months</span></h2>
+          <div id="trend-chart" class="chart"></div>
+          <div class="legend"><span><i class="sw sw-inc"></i>Income</span><span><i class="sw sw-exp"></i>Expenses</span></div>
+        </div>
+        <div class="card">
+          <h2>Spending by category</h2>
+          <div id="category-chart" class="hbars"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Budgets <span class="muted small" id="budget-period-label"></span></h2>
+        <div id="dash-budgets" class="budget-list"></div>
+      </div>
+      <div class="card">
+        <h2>Recent transactions</h2>
+        <div id="recent-list"></div>
+      </div>
+    </section>
+
+    <!-- TRANSACTIONS -->
+    <section id="view-transactions" class="view">
+      <div class="view-head">
+        <h1>Transactions</h1>
+        <button class="btn primary" id="btn-add-tx">+ Add transaction</button>
+      </div>
+      <div class="card filters">
+        <input type="search" id="f-search" placeholder="Search description, notes, account…">
+        <select id="f-month" data-default=""></select>
+        <select id="f-category"></select>
+        <select id="f-type">
+          <option value="">All types</option>
+          <option value="expense">Expenses</option>
+          <option value="income">Income</option>
+        </select>
+      </div>
+      <div class="card table-card">
+        <div class="table-summary" id="tx-summary"></div>
+        <div class="table-wrap">
+          <table class="tx-table">
+            <thead>
+              <tr>
+                <th data-sort="date" class="sortable">Date</th>
+                <th data-sort="description" class="sortable">Description</th>
+                <th data-sort="category" class="sortable hide-sm">Category</th>
+                <th data-sort="account" class="sortable hide-sm">Account</th>
+                <th data-sort="amount" class="sortable num">Amount</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="tx-body"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="tx-empty" hidden>No transactions match. Add one, or import a CSV from the Data tab.</p>
+      </div>
+    </section>
+
+    <!-- BUDGETS -->
+    <section id="view-budgets" class="view">
+      <div class="view-head">
+        <h1>Budgets</h1>
+        <label class="inline">Month
+          <select id="budget-month"></select>
+        </label>
+      </div>
+      <div class="card">
+        <p class="muted">Set a monthly limit for any expense category. Leave blank or 0 to remove it.</p>
+        <form id="budget-form" class="budget-add">
+          <input id="budget-cat" list="category-options" placeholder="Category" required>
+          <input id="budget-amt" type="number" step="0.01" min="0" placeholder="Monthly limit" required>
+          <button class="btn primary" type="submit">Save budget</button>
+        </form>
+        <div id="budget-table" class="budget-list"></div>
+      </div>
+    </section>
+
+    <!-- DATA -->
+    <section id="view-data" class="view">
+      <div class="view-head"><h1>Data</h1></div>
+
+      <div class="card">
+        <h2>Your data folder</h2>
+        <p>Everything lives in two plain CSV files: <code>transactions.csv</code> and <code>budgets.csv</code>.
+          Nothing is ever uploaded — this page has no server.</p>
+        <div id="folder-supported">
+          <p class="muted">Pick a folder on your computer and the app will read and write the CSV files there automatically every time you make a change.</p>
+          <div class="btn-row">
+            <button class="btn primary" id="btn-open-folder">Choose folder…</button>
+            <button class="btn" id="btn-reconnect" hidden></button>
+            <button class="btn" id="btn-disconnect" hidden>Disconnect folder</button>
+          </div>
+          <p id="folder-info" class="muted small"></p>
+        </div>
+        <div id="folder-unsupported" hidden>
+          <p class="note">Your browser can't write directly to a folder (that needs Chrome, Edge, or another Chromium browser).
+            Your data is kept in this browser between visits — use <strong>Download</strong> below to save your CSV files, and <strong>Open</strong> to load them back.</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2>Transactions</h2>
+          <p class="muted">Open a <code>transactions.csv</code> saved by this app, or import an export from your bank — you'll get to match up the columns.</p>
+          <div class="btn-row">
+            <button class="btn" id="btn-import-tx">Import / merge CSV…</button>
+            <button class="btn" id="btn-download-tx">Download transactions.csv</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Budgets</h2>
+          <p class="muted">Columns: <code>category,monthly_budget</code>. Loading a file replaces your current budgets.</p>
+          <div class="btn-row">
+            <button class="btn" id="btn-import-budgets">Open budgets CSV…</button>
+            <button class="btn" id="btn-download-budgets">Download budgets.csv</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Settings</h2>
+        <label class="inline">Currency
+          <select id="set-currency">
+            <option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option><option>AUD</option>
+            <option>NZD</option><option>JPY</option><option>CHF</option><option>SEK</option><option>NOK</option>
+            <option>DKK</option><option>INR</option><option>MXN</option><option>BRL</option><option>ZAR</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="card danger-zone">
+        <h2>Start over</h2>
+        <p class="muted">Clearing removes all data kept in this browser. A connected folder is disconnected first, and its CSV files are left untouched. Loading sample data replaces your current data (including a connected folder's files).</p>
+        <div class="btn-row">
+          <button class="btn" id="btn-sample">Load sample data</button>
+          <button class="btn danger" id="btn-clear">Clear all data</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Transaction dialog -->
+  <dialog id="tx-dialog">
+    <form id="tx-form" method="dialog">
+      <h2 id="tx-dialog-title">Add transaction</h2>
+      <div class="seg" role="radiogroup">
+        <label><input type="radio" name="kind" value="expense" checked><span>Expense</span></label>
+        <label><input type="radio" name="kind" value="income"><span>Income</span></label>
+      </div>
+      <div class="form-grid">
+        <label>Date<input type="date" name="date" required></label>
+        <label>Amount<input type="number" name="amount" step="0.01" min="0" required inputmode="decimal"></label>
+        <label class="span-2">Description<input name="description" required autocomplete="off"></label>
+        <label>Category<input name="category" list="category-options" autocomplete="off"></label>
+        <label>Account<input name="account" list="account-options" autocomplete="off"></label>
+        <label class="span-2">Notes<input name="notes" autocomplete="off"></label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn danger ghost" id="tx-delete" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" value="cancel" id="tx-cancel">Cancel</button>
+        <button type="submit" class="btn primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Import dialog -->
+  <dialog id="import-dialog" class="wide">
+    <form id="import-form" method="dialog">
+      <h2>Import transactions</h2>
+      <p class="muted small" id="import-file-info"></p>
+      <div class="map-grid" id="import-map"></div>
+      <label class="check"><input type="checkbox" id="import-flip"> Flip signs (use if expenses show up as positive numbers)</label>
+      <h3>Preview</h3>
+      <div class="table-wrap"><table class="tx-table compact" id="import-preview"></table></div>
+      <p class="small" id="import-stats"></p>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="import-cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="import-go">Import</button>
+      </div>
+    </form>
+  </dialog>
+
+  <datalist id="category-options"></datalist>
+  <datalist id="account-options"></datalist>
+  <input type="file" id="file-input" accept=".csv,text/csv" hidden>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="csv.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

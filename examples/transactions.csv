@@ -1,0 +1,8 @@
+id,date,description,category,amount,account,notes
+ex1,2026-09-01,Paycheck,Salary,2850.00,Checking,
+ex2,2026-09-01,Rent,Rent,-1650.00,Checking,
+ex3,2026-09-03,Fresh Market,Groceries,-84.12,Credit Card,
+ex4,2026-09-06,"Noodle House, downtown",Dining,-32.50,Credit Card,"Dinner with Sam"
+ex5,2026-09-15,Paycheck,Salary,2850.00,Checking,
+ex6,2026-09-25,Credit card payment,Transfer,-640.00,Checking,
+ex7,2026-09-25,Credit card payment,Transfer,640.00,Credit Card,
