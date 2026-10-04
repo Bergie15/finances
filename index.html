@@ -15,9 +15,9 @@
       <span>Finances</span>
     </div>
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-view="dashboard" role="tab">Dashboard</button>
+      <button class="tab active" data-view="budget" role="tab">Budget</button>
       <button class="tab" data-view="transactions" role="tab">Transactions</button>
-      <button class="tab" data-view="budgets" role="tab">Budgets</button>
+      <button class="tab" data-view="reports" role="tab">Reports</button>
       <button class="tab" data-view="data" role="tab">Data</button>
     </nav>
     <div id="save-status" class="save-status" title="Where your data is saved"></div>
@@ -36,10 +36,27 @@
   </header>
 
   <main>
-    <!-- DASHBOARD -->
-    <section id="view-dashboard" class="view active">
+    <!-- BUDGET (home) -->
+    <section id="view-budget" class="view active">
       <div class="view-head">
-        <h1>Dashboard</h1>
+        <div class="month-nav">
+          <button class="icon-btn nav-arrow" id="bm-prev" aria-label="Previous month">‹</button>
+          <h1 id="bm-title"></h1>
+          <button class="icon-btn nav-arrow" id="bm-next" aria-label="Next month">›</button>
+          <button class="link small" id="bm-today" hidden>This month</button>
+        </div>
+        <div class="head-actions">
+          <button class="btn" data-action="edit-budgets">Edit budget</button>
+          <button class="btn primary" data-action="add">+ Add expense</button>
+        </div>
+      </div>
+      <div id="budget-home"></div>
+    </section>
+
+    <!-- REPORTS -->
+    <section id="view-reports" class="view">
+      <div class="view-head">
+        <h1>Reports</h1>
         <label class="inline">Period
           <select id="dash-period"></select>
         </label>
@@ -60,14 +77,6 @@
           <h2>Spending by category</h2>
           <div id="category-chart" class="hbars"></div>
         </div>
-      </div>
-      <div class="card">
-        <h2>Budgets <span class="muted small" id="budget-period-label"></span></h2>
-        <div id="dash-budgets" class="budget-list"></div>
-      </div>
-      <div class="card">
-        <h2>Recent transactions</h2>
-        <div id="recent-list"></div>
       </div>
     </section>
 
@@ -105,32 +114,6 @@
           </table>
         </div>
         <p class="empty" id="tx-empty" hidden>No transactions match. Add one, or import a CSV from the Data tab.</p>
-      </div>
-    </section>
-
-    <!-- BUDGETS -->
-    <section id="view-budgets" class="view">
-      <div class="view-head">
-        <h1>Budgets</h1>
-        <label class="inline">Month
-          <select id="budget-month"></select>
-        </label>
-      </div>
-      <div class="card helper-cta">
-        <div>
-          <h2>Budget helper</h2>
-          <p class="muted">Not sure where to start? The helper looks at what you've actually spent, suggests a limit for each category, and shows how much you'd save.</p>
-        </div>
-        <button class="btn primary" data-action="budget-helper">Create a budget for me</button>
-      </div>
-      <div class="card">
-        <p class="muted">Set a monthly limit for any expense category. Leave blank or 0 to remove it.</p>
-        <form id="budget-form" class="budget-add">
-          <input id="budget-cat" list="category-options" placeholder="Category" required>
-          <input id="budget-amt" type="number" step="0.01" min="0" placeholder="Monthly limit" required>
-          <button class="btn primary" type="submit">Save budget</button>
-        </form>
-        <div id="budget-table" class="budget-list"></div>
       </div>
     </section>
 
@@ -219,6 +202,24 @@
         <span class="spacer"></span>
         <button type="button" class="btn" value="cancel" id="tx-cancel">Cancel</button>
         <button type="submit" class="btn primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Edit budget dialog -->
+  <dialog id="budget-dialog">
+    <form id="budget-edit-form" method="dialog">
+      <h2>Edit budget</h2>
+      <p class="muted small">Your monthly spending limit for each category. It applies to every month.</p>
+      <div class="be-head"><span>Category</span><span>Monthly limit</span><span></span></div>
+      <div id="be-rows" class="be-rows"></div>
+      <button type="button" class="link" id="be-add">+ Add a category</button>
+      <div class="be-total" id="be-total"></div>
+      <p class="small muted">Not sure what to set? <button type="button" class="link" data-action="budget-helper">Let the helper suggest amounts</button> from your spending.</p>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="be-cancel">Cancel</button>
+        <button type="submit" class="btn primary">Save budget</button>
       </div>
     </form>
   </dialog>

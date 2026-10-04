@@ -6,15 +6,25 @@ page is static HTML/JS, so nothing you enter ever leaves your computer.
 
 ## Features
 
-- **Dashboard** — income, expenses, net and savings rate for any month (or all time),
-  a 12‑month income vs. expenses chart, spending by category, budget progress and
-  recent transactions.
+- **Budget (home screen)** — how this month is going, at a glance:
+  - **Left to spend** across your budget, how much you can spend **per day** for the
+    rest of the month, and a status like *You're on track*, *2 categories are spending
+    fast* or *Over budget by $40*.
+  - A bar for every category with a **"today" marker**, so you can see whether spending
+    is ahead of where it should be for this point in the month. Bills paid in one go
+    (like rent) show as *Fully spent* rather than a warning.
+  - **Not in your budget** — spending in categories without a limit, with a one-click
+    *Add to budget*.
+  - Flip back through past months to see how each one finished.
+  - **+ Add expense** (or the **+** on any category) for quick entry.
+- **Edit budget** — one screen to set, change or remove each category's monthly limit,
+  with the total compared to your typical income.
+- **Reports** — income, expenses, net and savings rate for any month (or all time),
+  a 12‑month income vs. expenses chart and spending by category.
 - **Transactions** — add, edit and delete; search; filter by month, category and type;
   sort any column. Categories are suggested from earlier transactions with the same
   description.
-- **Budgets** — monthly limits per category, with progress bars that turn amber near
-  the limit and red when you go over.
-- **Budget helper** — click **Create a budget for me** on the Budgets tab. It averages
+- **Budget helper** — click **Create a budget for me** (or *Let the helper suggest amounts* in Edit budget). It averages
   your spending per category over the last 3, 6 or 12 months, suggests a tidy monthly
   limit for each, and shows your plan against your income as needs / wants / savings
   (with the 50/30/20 rule as a guide). Pick a savings goal (10%, 20% or 30% of income)

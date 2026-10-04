@@ -27,6 +27,7 @@
     budgets: [],
     currency: 'USD',
     sort: { key: 'date', dir: -1 },
+    budgetMonth: null,    // month shown on the Budget tab (YYYY-MM); null = current
     editingId: null,
     dir: null,            // FileSystemDirectoryHandle when a folder is connected
     pendingDir: null,     // saved handle awaiting a user gesture to re-grant permission
@@ -500,7 +501,7 @@
     $('#account-options').innerHTML = accounts.map(a => `<option value="${esc(a)}">`).join('');
   }
 
-  function renderDashboard() {
+  function renderReports() {
     const sel = $('#dash-period');
     fillMonthSelect(sel, { includeAll: true });
     const period = sel.value;
@@ -516,20 +517,6 @@
 
     renderTrendChart(period || allMonths()[0]);
     renderCategoryChart(list, period);
-
-    const budgetMonth = period || currentMonth();
-    $('#budget-period-label').textContent = monthLabel(budgetMonth);
-    renderBudgetList($('#dash-budgets'), budgetMonth, false);
-
-    const recent = [...state.tx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
-    $('#recent-list').innerHTML = recent.length
-      ? `<ul class="recent">${recent.map(t => `
-          <li data-id="${esc(t.id)}">
-            <span class="r-date">${esc(formatDate(t.date))}</span>
-            <span class="r-desc">${esc(t.description)}<small>${esc(t.category || 'Uncategorized')}</small></span>
-            <span class="r-amt ${t.amount < 0 ? 'neg' : 'pos'}">${money(t.amount)}</span>
-          </li>`).join('')}</ul>`
-      : emptyState();
   }
 
   function emptyState() {
@@ -606,38 +593,223 @@
       </button>`).join('');
   }
 
-  function renderBudgetList(el, ym, editable) {
-    if (!state.budgets.length) {
-      el.innerHTML = `<p class="muted">No budgets yet.${editable ? '' : ' <a href="#" data-action="budget-helper">Create one from your spending</a> or set limits on the <a href="#" data-action="goto-budgets">Budgets</a> tab.'}</p>`;
-      return;
-    }
-    const rows = [...state.budgets]
-      .map(b => ({ ...b, spent: spentInMonth(b.category, ym) }))
-      .sort((a, b) => (b.spent / b.monthly_budget) - (a.spent / a.monthly_budget));
-    let tb = 0, ts = 0;
-    el.innerHTML = rows.map(b => {
-      tb += b.monthly_budget; ts += b.spent;
-      const pct = b.spent / b.monthly_budget;
-      const left = round2(b.monthly_budget - b.spent);
-      const cls = pct > 1 ? 'over' : pct > 0.85 ? 'warn' : '';
-      return `<div class="budget-row ${cls}" data-category="${esc(b.category)}">
-        <div class="b-head">
-          <span class="b-name">${esc(b.category)}</span>
-          <span class="b-nums">${money(b.spent)} <span class="muted">of ${money(b.monthly_budget)}</span></span>
-        </div>
-        <div class="b-track"><div class="b-fill" style="width:${Math.min(100, pct * 100)}%"></div></div>
-        <div class="b-foot">
-          <span class="${left < 0 ? 'neg' : 'muted'}">${left < 0 ? `${money(-left)} over` : `${money(left)} left`}</span>
-          ${editable ? `<span><button class="link" data-edit-budget="${esc(b.category)}">Edit</button> · <button class="link danger" data-del-budget="${esc(b.category)}">Remove</button></span>` : ''}
-        </div>
-      </div>`;
-    }).join('') + `<div class="budget-total"><span>Total</span><span>${money(ts)} <span class="muted">of ${money(tb)}</span></span></div>`;
+  // ---------------------------------------------------------------------------
+  // Budget home: how this month's budget is going
+  // ---------------------------------------------------------------------------
+  function monthInfo(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    const days = new Date(y, m, 0).getDate();
+    const cur = currentMonth();
+    const isCurrent = ym === cur;
+    const day = ym < cur ? days : ym > cur ? 0 : new Date().getDate();
+    return {
+      days, day, isCurrent,
+      isPast: ym < cur,
+      isFuture: ym > cur,
+      elapsed: day / days,
+      daysLeft: isCurrent ? days - day + 1 : ym > cur ? days : 0, // includes today
+    };
   }
 
-  function renderBudgets() {
-    const sel = $('#budget-month');
-    fillMonthSelect(sel, { includeAll: false });
-    renderBudgetList($('#budget-table'), sel.value, true);
+  // Status of one budget line. "Fully spent" covers bills paid in one go (rent etc.)
+  // so they don't look alarming early in the month.
+  function budgetStatus(spent, budget, mi) {
+    const pct = budget > 0 ? spent / budget : 0;
+    if (spent > budget + 0.005) return { key: 'over', label: `Over by ${money(spent - budget)}` };
+    if (pct >= 0.97) return { key: 'full', label: 'Fully spent' };
+    if (mi.isCurrent && pct > mi.elapsed + 0.15) return { key: 'fast', label: 'Spending fast' };
+    if (mi.isPast) return { key: 'ok', label: `Under by ${money(budget - spent)}` };
+    return { key: 'ok', label: 'On track' };
+  }
+
+  function renderBudgetHome() {
+    const ym = state.budgetMonth || currentMonth();
+    const mi = monthInfo(ym);
+    $('#bm-title').textContent = new Date(...ym.split('-').map((v, i) => i ? v - 1 : +v), 1)
+      .toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    $('#bm-today').hidden = mi.isCurrent;
+    const el = $('#budget-home');
+
+    const monthTx = state.tx.filter(t => t.date.startsWith(ym));
+    const budgetKeys = new Set(state.budgets.map(b => b.category.toLowerCase()));
+    const lines = state.budgets.map(b => {
+      const spent = spentInMonth(b.category, ym);
+      return { ...b, spent, left: round2(b.monthly_budget - spent), status: budgetStatus(spent, b.monthly_budget, mi) };
+    });
+    const order = { over: 0, fast: 1, ok: 2, full: 3 };
+    lines.sort((a, b) => order[a.status.key] - order[b.status.key] || (b.spent / b.monthly_budget) - (a.spent / a.monthly_budget));
+
+    const totalBudget = round2(lines.reduce((a, l) => a + l.monthly_budget, 0));
+    const totalSpent = round2(lines.reduce((a, l) => a + l.spent, 0));
+    const left = round2(totalBudget - totalSpent);
+    const unbudgeted = spendByCategory(monthTx).filter(r => !budgetKeys.has(r.category.toLowerCase()));
+    const unbudgetedTotal = round2(unbudgeted.reduce((a, r) => a + r.amount, 0));
+    const { income, expense } = totals(monthTx);
+    const over = lines.filter(l => l.status.key === 'over');
+    const fast = lines.filter(l => l.status.key === 'fast');
+
+    let html = '';
+
+    // --- Hero
+    if (!state.budgets.length) {
+      html += `<div class="card hero hero-empty">
+        <h2>Set up your budget</h2>
+        <p class="muted">Give each spending category a monthly limit, and this page will show how you're doing at any moment: what's left, what you can spend per day, and which categories need attention.</p>
+        <div class="btn-row">
+          <button class="btn primary" data-action="budget-helper">Create a budget for me</button>
+          <button class="btn" data-action="edit-budgets">Set limits myself</button>
+          ${state.tx.length ? '' : '<button class="btn" data-action="goto-data">Import a CSV</button><button class="btn ghost" data-action="sample">Try sample data</button>'}
+        </div>
+      </div>`;
+    } else {
+      let tone, headline;
+      if (mi.isFuture) { tone = ''; headline = "This month hasn't started yet"; }
+      else if (left < 0) { tone = 'bad'; headline = `Over budget by ${money(-left)}`; }
+      else if (over.length) { tone = 'bad'; headline = `${over.length} ${over.length === 1 ? 'category is' : 'categories are'} over budget`; }
+      else if (fast.length) { tone = 'warn'; headline = `${fast.length} ${fast.length === 1 ? 'category is' : 'categories are'} spending fast`; }
+      else if (mi.isPast) { tone = 'good'; headline = `Finished ${money(left)} under budget`; }
+      else { tone = 'good'; headline = "You're on track"; }
+
+      const usedPct = totalBudget ? Math.round((totalSpent / totalBudget) * 100) : 0;
+      const sub = mi.isCurrent
+        ? `${usedPct}% of your budget used · ${Math.round(mi.elapsed * 100)}% of the month gone · ${mi.daysLeft} day${mi.daysLeft === 1 ? '' : 's'} left`
+        : mi.isPast ? `${usedPct}% of your budget used` : `${money(totalBudget)} budgeted`;
+      const perDay = mi.isCurrent && left > 0 ? left / mi.daysLeft : null;
+
+      html += `<div class="card hero ${tone}">
+        <div class="hero-top">
+          <div>
+            <div class="hero-label">${left < 0 ? 'Over budget' : mi.isPast ? 'Left unspent' : 'Left to spend'}</div>
+            <div class="hero-amount ${left < 0 ? 'neg' : ''}">${money(Math.abs(left))}</div>
+            <div class="hero-of muted">${money(totalSpent)} spent of ${money(totalBudget)}</div>
+          </div>
+          <div class="hero-status"><span class="pill ${tone}">${esc(headline)}</span></div>
+        </div>
+        <div class="meter big ${left < 0 ? 'over' : ''}">
+          <div class="meter-fill" style="width:${Math.min(100, totalBudget ? (totalSpent / totalBudget) * 100 : 0)}%"></div>
+          ${mi.isCurrent ? `<div class="meter-today" style="left:${mi.elapsed * 100}%" title="Today"></div>` : ''}
+        </div>
+        <p class="hero-sub muted small">${sub}</p>
+        <div class="hero-stats">
+          ${perDay != null ? `<div><span class="stat-label">You can spend</span><b>${money(perDay)}<small> / day</small></b></div>` : ''}
+          <div><span class="stat-label">Not in budget</span><b class="${unbudgetedTotal ? 'warn-text' : ''}">${money(unbudgetedTotal)}</b></div>
+          <div><span class="stat-label">Income</span><b class="pos">${money(income)}</b></div>
+          <div><span class="stat-label">All spending</span><b>${money(expense)}</b></div>
+        </div>
+      </div>`;
+    }
+
+    // --- Category lines
+    if (lines.length) {
+      html += `<div class="card"><div class="card-head"><h2>Categories</h2>${mi.isCurrent ? '<span class="muted small legend-today"><i></i>today</span>' : ''}</div>
+        <div class="lines">${lines.map(l => {
+          const pct = l.monthly_budget ? l.spent / l.monthly_budget : 0;
+          const perDay = mi.isCurrent && l.left > 0 ? `${money(l.left / mi.daysLeft)}/day` : '';
+          return `<div class="line ${l.status.key}" data-category="${esc(l.category)}">
+            <div class="line-top">
+              <button class="line-name" data-filter-cat="${esc(l.category)}" title="See transactions">${esc(l.category)}</button>
+              <span class="line-left ${l.left < 0 ? 'neg' : ''}">${l.left < 0 ? `${money(-l.left)} over` : `${money(l.left)} left`}</span>
+            </div>
+            <div class="meter">
+              <div class="meter-fill" style="width:${Math.min(100, pct * 100)}%"></div>
+              ${mi.isCurrent ? `<div class="meter-today" style="left:${mi.elapsed * 100}%"></div>` : ''}
+            </div>
+            <div class="line-foot">
+              <span class="muted">${money(l.spent)} of ${money(l.monthly_budget)}${perDay ? ` · ${perDay}` : ''}</span>
+              <span class="line-status">${esc(l.status.label)}</span>
+              <button class="icon-btn add-to" data-add-cat="${esc(l.category)}" title="Add an expense to ${esc(l.category)}" aria-label="Add an expense to ${esc(l.category)}">+</button>
+            </div>
+          </div>`;
+        }).join('')}</div></div>`;
+    }
+
+    // --- Spending outside the budget
+    if (unbudgeted.length) {
+      html += `<div class="card"><h2>Not in your budget</h2>
+        <p class="muted small">Spending this month in categories without a limit.</p>
+        <ul class="plain-list">${unbudgeted.map(r => `
+          <li><button class="line-name" data-filter-cat="${esc(r.category)}">${esc(r.category)}</button>
+            <span>${money(r.amount)}</span>
+            ${r.category === 'Uncategorized' ? '' : `<button class="btn small-btn" data-budget-for="${esc(r.category)}" data-suggest="${r.amount}">Add to budget</button>`}</li>`).join('')}
+        </ul></div>`;
+    }
+
+    // --- This month's transactions
+    if (!state.tx.length) { el.innerHTML = html; return; }
+    const recent = [...monthTx].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 8);
+    html += `<div class="card"><div class="card-head"><h2>${mi.isCurrent ? 'Latest this month' : 'Transactions'}</h2>
+      ${monthTx.length > recent.length ? `<button class="link small" data-filter-cat="">See all ${monthTx.length}</button>` : ''}</div>
+      ${recent.length ? `<ul class="recent">${recent.map(t => `
+        <li data-id="${esc(t.id)}">
+          <span class="r-date">${esc(formatDate(t.date))}</span>
+          <span class="r-desc">${esc(t.description)}<small>${esc(t.category || 'Uncategorized')}</small></span>
+          <span class="r-amt ${t.amount < 0 ? 'neg' : 'pos'}">${money(t.amount)}</span>
+        </li>`).join('')}</ul>` : '<p class="muted">Nothing recorded this month yet.</p>'}
+    </div>`;
+
+    el.innerHTML = html;
+  }
+
+  function showTransactionsFor(category, ym) {
+    $('#f-search').value = '';
+    $('#f-type').value = '';
+    showView('transactions');
+    renderTransactions();
+    $('#f-month').value = ym || '';
+    $('#f-category').value = category === 'Uncategorized' ? '__none__' : (category || '');
+    renderTransactions();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Edit budget dialog
+  // ---------------------------------------------------------------------------
+  function beRow(category = '', amount = '') {
+    return `<div class="be-row">
+      <input class="be-cat" list="category-options" placeholder="Category" value="${esc(category)}" aria-label="Category">
+      <input class="be-amt" type="number" min="0" step="any" inputmode="decimal" placeholder="0" value="${amount === '' ? '' : esc(amount)}" aria-label="Monthly limit">
+      <button type="button" class="icon-btn be-del" title="Remove" aria-label="Remove">×</button>
+    </div>`;
+  }
+
+  function openBudgetDialog(addCategory, suggest) {
+    const rows = [...state.budgets].sort((a, b) => b.monthly_budget - a.monthly_budget);
+    let html = rows.map(b => beRow(b.category, b.monthly_budget)).join('');
+    if (addCategory && !state.budgets.some(b => b.category.toLowerCase() === addCategory.toLowerCase())) {
+      html += beRow(addCategory, suggest ? tidy(suggest, true) : '');
+    }
+    if (!html) html = beRow();
+    $('#be-rows').innerHTML = html;
+    updateBudgetTotal();
+    $('#budget-dialog').showModal();
+    const focus = addCategory ? $$('#be-rows .be-amt').pop() : $('#be-rows .be-cat');
+    if (focus) focus.focus();
+  }
+
+  function readBudgetRows() {
+    const map = new Map();
+    $$('#be-rows .be-row').forEach(r => {
+      const cat = r.querySelector('.be-cat').value.trim();
+      const amt = parseAmount(r.querySelector('.be-amt').value) || 0;
+      if (cat && amt > 0) map.set(cat.toLowerCase(), { category: cat, monthly_budget: round2(amt) });
+    });
+    return [...map.values()];
+  }
+
+  function updateBudgetTotal() {
+    const total = readBudgetRows().reduce((a, b) => a + b.monthly_budget, 0);
+    // Typical monthly income over the last few complete months, for context.
+    const months = helperMonths(3);
+    const set = new Set(months);
+    const inc = totals(state.tx.filter(t => set.has(t.date.slice(0, 7)))).income / (months.length || 1);
+    $('#be-total').innerHTML = `Total <b>${money(total)}</b> / month` +
+      (inc > 0 ? ` <span class="muted">· typical income ${money(inc)} · <span class="${inc - total < 0 ? 'neg' : 'pos'}">${money(inc - total)} left over</span></span>` : '');
+  }
+
+  function saveBudgetDialog() {
+    state.budgets = readBudgetRows();
+    $('#budget-dialog').close();
+    persist();
+    toast('Budget saved');
   }
 
   function filteredTx() {
@@ -744,9 +916,9 @@
   function renderAll() {
     $('#set-currency').value = state.currency;
     renderDatalists();
-    renderDashboard();
+    renderBudgetHome();
+    renderReports();
     renderTransactions();
-    renderBudgets();
     renderStatus();
   }
 
@@ -754,14 +926,14 @@
     $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === name));
     $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
     if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
-    if (name === 'dashboard') renderDashboard(); // chart sizing needs the view visible
+    if (name === 'reports') renderReports(); // chart sizing needs the view visible
     window.scrollTo(0, 0);
   }
 
   // ---------------------------------------------------------------------------
   // Transaction dialog
   // ---------------------------------------------------------------------------
-  function openTxDialog(id) {
+  function openTxDialog(id, preset = {}) {
     const dlg = $('#tx-dialog');
     const f = $('#tx-form');
     const t = id ? state.tx.find(x => x.id === id) : null;
@@ -773,7 +945,7 @@
     f.elements.date.value = t ? t.date : todayISO();
     f.elements.amount.value = t ? Math.abs(t.amount).toFixed(2) : '';
     f.elements.description.value = t ? t.description : '';
-    f.elements.category.value = t ? t.category : '';
+    f.elements.category.value = t ? t.category : (preset.category || '');
     f.elements.account.value = t ? t.account : (lastAccount() || '');
     f.elements.notes.value = t ? t.notes : '';
     dlg.showModal();
@@ -1110,7 +1282,7 @@
     state.budgets.push(...plan.map(r => ({ category: r.category, monthly_budget: round2(r.budget) })));
     $('#helper-dialog').close();
     persist();
-    showView('budgets');
+    showView('budget');
     toast(`Saved ${plan.length} budget${plan.length === 1 ? '' : 's'}`);
   }
 
@@ -1150,7 +1322,7 @@
       }
     }
     const budgets = [
-      ['Groceries', 450], ['Dining', 250], ['Transport', 150], ['Shopping', 150],
+      ['Rent', 1650], ['Groceries', 450], ['Dining', 250], ['Health', 50], ['Transport', 150], ['Shopping', 150],
       ['Entertainment', 100], ['Utilities', 250], ['Subscriptions', 30],
     ].map(([category, monthly_budget]) => ({ category, monthly_budget }));
     return { tx, budgets };
@@ -1178,32 +1350,51 @@
       e.preventDefault();
       const act = a.dataset.action;
       if (act === 'add') openTxDialog();
-      else if (act === 'goto-budgets') showView('budgets');
+      else if (act === 'edit-budgets') openBudgetDialog();
       else if (act === 'sample') { $$('dialog[open]').forEach(d => d.close()); loadSample(); }
       else if (act === 'goto-data') { $$('dialog[open]').forEach(d => d.close()); showView('data'); }
-      else if (act === 'budget-helper') openHelper();
+      else if (act === 'budget-helper') { $('#budget-dialog').close(); openHelper(); }
     });
 
-    // Dashboard
-    $('#dash-period').addEventListener('change', renderDashboard);
+    // Budget home
+    const setBudgetMonth = ym => { state.budgetMonth = ym === currentMonth() ? null : ym; renderBudgetHome(); };
+    $('#bm-prev').addEventListener('click', () => setBudgetMonth(shiftMonth(state.budgetMonth || currentMonth(), -1)));
+    $('#bm-next').addEventListener('click', () => setBudgetMonth(shiftMonth(state.budgetMonth || currentMonth(), 1)));
+    $('#bm-today').addEventListener('click', () => setBudgetMonth(currentMonth()));
+    $('#budget-home').addEventListener('click', e => {
+      const ym = state.budgetMonth || currentMonth();
+      const f = e.target.closest('[data-filter-cat]');
+      const add = e.target.closest('[data-add-cat]');
+      const bf = e.target.closest('[data-budget-for]');
+      const li = e.target.closest('li[data-id]');
+      if (add) openTxDialog(null, { category: add.dataset.addCat });
+      else if (bf) openBudgetDialog(bf.dataset.budgetFor, Number(bf.dataset.suggest));
+      else if (f) showTransactionsFor(f.dataset.filterCat, ym);
+      else if (li) openTxDialog(li.dataset.id);
+    });
+
+    // Edit budget dialog
+    $('#be-add').addEventListener('click', () => {
+      $('#be-rows').insertAdjacentHTML('beforeend', beRow());
+      $$('#be-rows .be-cat').pop().focus();
+    });
+    $('#be-rows').addEventListener('click', e => {
+      const d = e.target.closest('.be-del');
+      if (d) { d.closest('.be-row').remove(); updateBudgetTotal(); }
+    });
+    $('#be-rows').addEventListener('input', updateBudgetTotal);
+    $('#be-cancel').addEventListener('click', () => $('#budget-dialog').close());
+    $('#budget-edit-form').addEventListener('submit', e => { e.preventDefault(); saveBudgetDialog(); });
+
+    // Reports
+    $('#dash-period').addEventListener('change', renderReports);
     $('#trend-chart').addEventListener('click', e => {
       const g = e.target.closest('.col');
-      if (g) { $('#dash-period').value = g.dataset.month; renderDashboard(); }
+      if (g) { $('#dash-period').value = g.dataset.month; renderReports(); }
     });
     $('#category-chart').addEventListener('click', e => {
       const b = e.target.closest('.hbar[data-category]');
-      if (!b) return;
-      $('#f-search').value = '';
-      $('#f-type').value = '';
-      $('#f-month').value = b.dataset.period;
-      showView('transactions');
-      renderTransactions();
-      $('#f-category').value = b.dataset.category === 'Uncategorized' ? '__none__' : b.dataset.category;
-      renderTransactions();
-    });
-    $('#recent-list').addEventListener('click', e => {
-      const li = e.target.closest('li[data-id]');
-      if (li) openTxDialog(li.dataset.id);
+      if (b) showTransactionsFor(b.dataset.category, b.dataset.period);
     });
 
     // Transactions
@@ -1256,34 +1447,6 @@
     });
     $('#helper-form').addEventListener('submit', e => { e.preventDefault(); saveHelper(); });
     $('#helper-cancel').addEventListener('click', () => $('#helper-dialog').close());
-
-    // Budgets
-    $('#budget-month').addEventListener('change', renderBudgets);
-    $('#budget-form').addEventListener('submit', e => {
-      e.preventDefault();
-      const cat = $('#budget-cat').value.trim();
-      const amt = parseAmount($('#budget-amt').value) || 0;
-      if (!cat) return;
-      state.budgets = state.budgets.filter(b => b.category.toLowerCase() !== cat.toLowerCase());
-      if (amt > 0) state.budgets.push({ category: cat, monthly_budget: round2(amt) });
-      $('#budget-form').reset();
-      persist();
-      toast(amt > 0 ? `Budget for ${cat} saved` : `Budget for ${cat} removed`);
-    });
-    $('#budget-table').addEventListener('click', e => {
-      const ed = e.target.closest('[data-edit-budget]');
-      const del = e.target.closest('[data-del-budget]');
-      if (ed) {
-        const b = state.budgets.find(x => x.category === ed.dataset.editBudget);
-        $('#budget-cat').value = b.category;
-        $('#budget-amt').value = b.monthly_budget;
-        $('#budget-amt').focus();
-      } else if (del) {
-        state.budgets = state.budgets.filter(x => x.category !== del.dataset.delBudget);
-        persist();
-        toast('Budget removed');
-      }
-    });
 
     // Data
     $('#btn-open-folder').addEventListener('click', chooseFolder);
@@ -1339,7 +1502,7 @@
     let resizeT;
     window.addEventListener('resize', () => {
       clearTimeout(resizeT);
-      resizeT = setTimeout(() => { if ($('#view-dashboard').classList.contains('active')) renderDashboard(); }, 150);
+      resizeT = setTimeout(() => { if ($('#view-reports').classList.contains('active')) renderReports(); }, 150);
     });
 
     // Warn before leaving if a folder write is still pending.
@@ -1355,7 +1518,7 @@
     state.tx = s.tx;
     state.budgets = s.budgets;
     persist();
-    showView('dashboard');
+    showView('budget');
     toast('Sample data loaded');
   }
 
@@ -1365,7 +1528,7 @@
   loadFromBrowser();
   bind();
   renderAll();
-  const initial = location.hash.slice(1);
+  const initial = { dashboard: 'budget', budgets: 'budget' }[location.hash.slice(1)] || location.hash.slice(1);
   if ($(`#view-${initial}`)) showView(initial);
   restoreFolder();
 })();
