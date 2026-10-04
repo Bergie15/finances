@@ -14,6 +14,12 @@ page is static HTML/JS, so nothing you enter ever leaves your computer.
   description.
 - **Budgets** — monthly limits per category, with progress bars that turn amber near
   the limit and red when you go over.
+- **Budget helper** — click **Create a budget for me** on the Budgets tab. It averages
+  your spending per category over the last 3, 6 or 12 months, suggests a tidy monthly
+  limit for each, and shows your plan against your income as needs / wants / savings
+  (with the 50/30/20 rule as a guide). Pick a savings goal (10%, 20% or 30% of income)
+  and it trims "wants" to get there, telling you if the goal isn't realistic. Tweak any
+  number, mark categories as needs or wants, then save.
 - **CSV import** — import exports from your bank. Columns are auto-detected and you can
   remap them; supports a single signed amount column or separate debit/credit columns,
   US or day-first dates, and a "flip signs" option. Re-importing the same file skips

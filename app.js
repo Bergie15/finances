@@ -571,7 +571,7 @@
 
   function renderBudgetList(el, ym, editable) {
     if (!state.budgets.length) {
-      el.innerHTML = `<p class="muted">No budgets yet.${editable ? '' : ' Set some on the <a href="#" data-action="goto-budgets">Budgets</a> tab.'}</p>`;
+      el.innerHTML = `<p class="muted">No budgets yet.${editable ? '' : ' <a href="#" data-action="budget-helper">Create one from your spending</a> or set limits on the <a href="#" data-action="goto-budgets">Budgets</a> tab.'}</p>`;
       return;
     }
     const rows = [...state.budgets]
@@ -922,6 +922,150 @@
     toast(`Imported ${plan.add.length} transaction${plan.add.length === 1 ? '' : 's'}`);
   }
 
+
+  // ---------------------------------------------------------------------------
+  // Budget helper: suggest budgets from spending history
+  // ---------------------------------------------------------------------------
+  const NEEDS_RE = /rent|mortgage|housing|utilit|electric|water|grocer|health|medical|pharm|insur|transport|transit|gas|fuel|car|childcare|daycare|loan|debt|phone|internet|tax/i;
+
+  let helperState = null;
+
+  // Round up to a tidy number: $5 steps, $10 above $200, $25 above $1,000.
+  function tidy(n, up) {
+    const step = n > 1000 ? 25 : n > 200 ? 10 : 5;
+    return (up ? Math.ceil(n / step) : Math.round(n / step)) * step;
+  }
+
+  // The complete months to average over: up to `n` months before the current one,
+  // but never before your first transaction (so 2 months of data isn't averaged over 6).
+  function helperMonths(n) {
+    const first = state.tx.reduce((m, t) => (!m || t.date < m ? t.date : m), null);
+    if (!first) return [];
+    const firstMonth = first.slice(0, 7);
+    const months = [];
+    for (let i = 1; i <= n; i++) {
+      const m = shiftMonth(currentMonth(), -i);
+      if (m < firstMonth) break;
+      months.push(m);
+    }
+    // Brand new data that only covers this month: use it rather than nothing.
+    return months.length ? months : [currentMonth()];
+  }
+
+  function openHelper() {
+    const has = state.tx.some(t => t.amount < 0 && !isTransfer(t));
+    $('#helper-empty').hidden = has;
+    $('#helper-body').hidden = !has;
+    $('#helper-save').hidden = !has;
+    helperState = { kinds: {} };
+    if (has) buildHelper();
+    $('#helper-dialog').showModal();
+  }
+
+  function buildHelper() {
+    const months = helperMonths(Number($('#helper-basis').value));
+    const set = new Set(months);
+    const list = state.tx.filter(t => set.has(t.date.slice(0, 7)));
+    const n = months.length;
+    const income = round2(totals(list).income / n);
+    const rows = spendByCategory(list).map(r => {
+      const kind = helperState.kinds[r.category] || (NEEDS_RE.test(r.category) ? 'need' : 'want');
+      return { category: r.category, kind, avg: round2(r.amount / n), budget: 0 };
+    });
+    helperState = { ...helperState, months, income, rows };
+
+    const range = n === 1 ? monthLabel(months[0]) : `${monthLabel(months[n - 1])} – ${monthLabel(months[0])}`;
+    $('#helper-basis-info').textContent = `Averaging ${n} month${n === 1 ? '' : 's'} of data (${range})${months[0] === currentMonth() ? ', which is still in progress' : ''}.`;
+    $('#helper-goal').disabled = income <= 0;
+    suggestBudgets();
+  }
+
+  function suggestBudgets() {
+    const s = helperState;
+    const goal = s.income > 0 ? Number($('#helper-goal').value || 0) : 0;
+    const pctGoal = Math.round(goal * 100);
+    // Needs keep their average (rounded up); wants get whatever room is left.
+    let needsBudget = 0, wantsAvg = 0;
+    for (const r of s.rows) {
+      if (r.kind === 'need') { r.budget = tidy(r.avg, true); needsBudget += r.budget; }
+      else wantsAvg += r.avg;
+    }
+    const wantsAsIs = s.rows.filter(r => r.kind === 'want').reduce((a, r) => a + tidy(r.avg, true), 0);
+    let factor = 1;
+    s.note = '';
+    if (goal) {
+      const room = s.income * (1 - goal) - needsBudget; // what wants can use and still hit the goal
+      if (wantsAsIs <= room) {
+        s.note = `You're already on track to save at least ${pctGoal}% — these budgets keep your spending where it is.`;
+      } else if (wantsAvg > 0 && room >= wantsAvg * 0.5) {
+        factor = room / wantsAvg;
+        s.note = `To save ${pctGoal}%, your "wants" are trimmed by about ${Math.max(1, Math.round((1 - factor) * 100))}%.`;
+      } else {
+        // Trimming wants by more than half stops being a realistic plan, so cap it
+        // and say so instead.
+        factor = 0.5;
+        s.note = `Saving ${pctGoal}% would mean cutting more than half of your "wants" spending, so this plan trims them by 50% and falls short. Look at your biggest needs too, or pick a smaller goal.`;
+      }
+    }
+    for (const r of s.rows) {
+      if (r.kind !== 'want') continue;
+      // Round down when trimming so the rounding never pushes you past the goal.
+      r.budget = factor === 1 ? tidy(r.avg, true) : Math.floor((r.avg * factor) / 5) * 5;
+      if (r.avg > 0 && r.budget === 0) r.budget = 5;
+    }
+    renderHelper();
+  }
+
+  function renderHelper() {
+    const s = helperState;
+    $('#helper-rows').innerHTML = s.rows.map((r, i) => `
+      <tr data-i="${i}">
+        <td>${esc(r.category)}<small class="show-sm muted">avg ${money(r.avg)}</small></td>
+        <td><select data-kind="${i}" class="kind-select"><option value="need"${r.kind === 'need' ? ' selected' : ''}>Need</option><option value="want"${r.kind === 'want' ? ' selected' : ''}>Want</option></select></td>
+        <td class="num muted hide-sm">${money(r.avg)}</td>
+        <td class="num"><input type="number" min="0" step="any" data-budget="${i}" value="${r.budget}" class="budget-input" aria-label="Budget for ${esc(r.category)}"></td>
+      </tr>`).join('');
+    $('#helper-note').textContent = s.note || '';
+    renderHelperSummary();
+  }
+
+  function renderHelperSummary() {
+    const s = helperState;
+    const needs = s.rows.filter(r => r.kind === 'need').reduce((a, r) => a + r.budget, 0);
+    const wants = s.rows.filter(r => r.kind === 'want').reduce((a, r) => a + r.budget, 0);
+    const total = needs + wants;
+    const left = s.income - total;
+    const pct = v => (s.income > 0 ? Math.round((v / s.income) * 100) : 0);
+    const bar = s.income > 0 ? `
+      <div class="split-bar" title="Share of your average income">
+        <span class="split-need" style="width:${Math.min(100, pct(needs))}%"></span>
+        <span class="split-want" style="width:${Math.max(0, Math.min(100 - pct(needs), pct(wants)))}%"></span>
+      </div>
+      <div class="split-legend">
+        <span><i class="sw split-need"></i>Needs ${pct(needs)}% <small>(guide: 50%)</small></span>
+        <span><i class="sw split-want"></i>Wants ${pct(wants)}% <small>(guide: 30%)</small></span>
+        <span><i class="sw split-save"></i>Savings ${pct(left)}% <small>(guide: 20%)</small></span>
+      </div>` : '<p class="muted small">No income found in this period, so savings can\'t be estimated.</p>';
+    $('#helper-summary').innerHTML = `
+      <div class="helper-stats">
+        <div><span class="stat-label">Avg income</span><b class="pos">${money(s.income)}</b></div>
+        <div><span class="stat-label">Total budget</span><b>${money(total)}</b></div>
+        <div><span class="stat-label">Left to save</span><b class="${left < 0 ? 'neg' : ''}">${money(left)}</b></div>
+      </div>${bar}`;
+  }
+
+  function saveHelper() {
+    const s = helperState;
+    const plan = s.rows.filter(r => r.budget > 0);
+    const keys = new Set(s.rows.map(r => r.category.toLowerCase()));
+    state.budgets = state.budgets.filter(b => !keys.has(b.category.toLowerCase()));
+    state.budgets.push(...plan.map(r => ({ category: r.category, monthly_budget: round2(r.budget) })));
+    $('#helper-dialog').close();
+    persist();
+    showView('budgets');
+    toast(`Saved ${plan.length} budget${plan.length === 1 ? '' : 's'}`);
+  }
+
   // ---------------------------------------------------------------------------
   // Sample data
   // ---------------------------------------------------------------------------
@@ -938,22 +1082,22 @@
       const d = day => `${ym}-${String(day).padStart(2, '0')}`;
       const within = day => d(day) <= today;
       if (within(1)) add(d(1), 'Rent', 'Rent', -1650);
-      if (within(1)) add(d(1), 'Paycheck', 'Salary', 2850);
-      if (within(15)) add(d(15), 'Paycheck', 'Salary', 2850);
+      if (within(1)) add(d(1), 'Paycheck', 'Salary', 2100);
+      if (within(15)) add(d(15), 'Paycheck', 'Salary', 2100);
       if (within(5)) add(d(5), 'City Power & Water', 'Utilities', -(95 + rnd() * 60));
       if (within(8)) add(d(8), 'Internet', 'Utilities', -65);
       if (within(12)) add(d(12), 'Streaming service', 'Subscriptions', -15.49, 'Credit Card');
       if (within(20)) add(d(20), 'Phone plan', 'Utilities', -45);
       if (within(25)) add(d(25), 'Credit card payment', 'Transfer', -(600 + rnd() * 300));
       if (within(25)) add(d(25), 'Credit card payment', 'Transfer', 600 + rnd() * 300, 'Credit Card');
-      for (let day = 2; day <= 28; day += 3 + Math.floor(rnd() * 3)) {
+      for (let day = 2; day <= 28; day += 1 + Math.floor(rnd() * 2)) {
         if (!within(day)) break;
         const r = rnd();
-        if (r < 0.35) add(d(day), pick(['Fresh Market', 'Corner Grocery', 'Costco']), 'Groceries', -(40 + rnd() * 110), 'Credit Card');
-        else if (r < 0.6) add(d(day), pick(['Taco Spot', 'Noodle House', 'Pizza Place', 'Coffee Bar']), 'Dining', -(8 + rnd() * 50), 'Credit Card');
+        if (r < 0.35) add(d(day), pick(['Fresh Market', 'Corner Grocery', 'Costco']), 'Groceries', -(45 + rnd() * 90), 'Credit Card');
+        else if (r < 0.6) add(d(day), pick(['Taco Spot', 'Noodle House', 'Pizza Place', 'Coffee Bar']), 'Dining', -(12 + rnd() * 65), 'Credit Card');
         else if (r < 0.75) add(d(day), pick(['Gas station', 'Transit pass', 'Rideshare']), 'Transport', -(12 + rnd() * 50), 'Credit Card');
-        else if (r < 0.87) add(d(day), pick(['Bookstore', 'Hardware store', 'Online order']), 'Shopping', -(15 + rnd() * 90), 'Credit Card');
-        else if (r < 0.95) add(d(day), pick(['Movie tickets', 'Concert', 'Bowling']), 'Entertainment', -(15 + rnd() * 60), 'Credit Card');
+        else if (r < 0.87) add(d(day), pick(['Bookstore', 'Hardware store', 'Online order']), 'Shopping', -(25 + rnd() * 140), 'Credit Card');
+        else if (r < 0.95) add(d(day), pick(['Movie tickets', 'Concert', 'Bowling']), 'Entertainment', -(20 + rnd() * 80), 'Credit Card');
         else add(d(day), 'Pharmacy', 'Health', -(10 + rnd() * 40), 'Credit Card');
       }
     }
@@ -986,9 +1130,10 @@
       e.preventDefault();
       const act = a.dataset.action;
       if (act === 'add') openTxDialog();
-      else if (act === 'goto-data') showView('data');
       else if (act === 'goto-budgets') showView('budgets');
-      else if (act === 'sample') loadSample();
+      else if (act === 'sample') { $$('dialog[open]').forEach(d => d.close()); loadSample(); }
+      else if (act === 'goto-data') { $$('dialog[open]').forEach(d => d.close()); showView('data'); }
+      else if (act === 'budget-helper') openHelper();
     });
 
     // Dashboard
@@ -1044,6 +1189,25 @@
         if (s) catInput.value = s;
       }
     });
+
+    // Budget helper
+    $('#helper-basis').addEventListener('change', buildHelper);
+    $('#helper-goal').addEventListener('change', suggestBudgets);
+    $('#helper-rows').addEventListener('change', e => {
+      const k = e.target.dataset.kind;
+      if (k != null) {
+        const r = helperState.rows[k];
+        r.kind = e.target.value;
+        helperState.kinds[r.category] = r.kind;
+        suggestBudgets();
+      }
+    });
+    $('#helper-rows').addEventListener('input', e => {
+      const i = e.target.dataset.budget;
+      if (i != null) { helperState.rows[i].budget = Math.max(0, parseAmount(e.target.value) || 0); renderHelperSummary(); }
+    });
+    $('#helper-form').addEventListener('submit', e => { e.preventDefault(); saveHelper(); });
+    $('#helper-cancel').addEventListener('click', () => $('#helper-dialog').close());
 
     // Budgets
     $('#budget-month').addEventListener('change', renderBudgets);
