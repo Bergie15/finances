@@ -12,6 +12,7 @@
     tx: 'finances.transactions.csv',
     budgets: 'finances.budgets.csv',
     currency: 'finances.currency',
+    exported: 'finances.exported', // fingerprints of the last exported CSVs
   };
   const DEFAULT_CATEGORIES = [
     'Groceries', 'Dining', 'Rent', 'Utilities', 'Transport', 'Shopping', 'Health',
@@ -383,6 +384,42 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // Cheap fingerprint of a CSV so we can tell whether it changed since the last export.
+  function fingerprint(text) {
+    let h = 5381;
+    for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+    return `${text.length}:${h >>> 0}`;
+  }
+
+  function exportedPrints() {
+    try { return JSON.parse(lsGet(LS.exported)) || {}; } catch { return {}; }
+  }
+
+  // Which files have changes that haven't been exported yet.
+  function unexported() {
+    const p = exportedPrints();
+    const out = [];
+    if (state.tx.length && p.tx !== fingerprint(txToCSV())) out.push(TX_FILE);
+    if (state.budgets.length && p.budgets !== fingerprint(budgetsToCSV())) out.push(BUDGET_FILE);
+    return out;
+  }
+
+  function exportFiles(which) {
+    const p = exportedPrints();
+    const files = [];
+    if (which === 'both' || which === 'tx') {
+      const t = txToCSV(); files.push([TX_FILE, t]); p.tx = fingerprint(t);
+    }
+    if (which === 'both' || which === 'budgets') {
+      const b = budgetsToCSV(); files.push([BUDGET_FILE, b]); p.budgets = fingerprint(b);
+    }
+    // Stagger downloads slightly; some browsers drop a second one fired in the same tick.
+    files.forEach(([name, text], i) => setTimeout(() => download(name, text), i * 400));
+    lsSet(LS.exported, JSON.stringify(p));
+    renderStatus();
+    toast(`Exported ${files.map(f => f[0]).join(' and ')}`);
+  }
+
   function pickFile() {
     return new Promise(resolve => {
       const input = $('#file-input');
@@ -670,8 +707,19 @@
     } else {
       cls = 'local'; html = 'Saved in this browser';
     }
+    const pending = unexported();
+    if (!state.dir && !state.pendingDir && pending.length) { cls = 'unexported'; html = '<span class="hide-sm">Saved in browser · </span><b>Not exported</b>'; }
+    else if (!state.dir && !state.pendingDir && (state.tx.length || state.budgets.length)) html = 'Saved in browser<span class="hide-sm"> · exported</span>';
     el.className = 'save-status ' + cls;
     el.innerHTML = `<i></i><span>${html}</span>`;
+
+    // Export button: flag unexported changes when no folder is keeping the CSVs up to date.
+    const flag = !state.dir && pending.length > 0;
+    $('.export-dot').hidden = !flag;
+    $('#btn-export').classList.toggle('attention', flag);
+    $('#export-note').textContent = state.dir
+      ? `Your folder already has the latest CSVs. Exporting downloads an extra copy.`
+      : flag ? `Changes not exported yet: ${pending.join(', ')}.` : (state.tx.length || state.budgets.length ? 'Everything has been exported.' : 'Nothing to export yet.');
 
     // Data tab
     $('#folder-supported').hidden = !folderSupported;
@@ -1241,8 +1289,19 @@
     $('#btn-open-folder').addEventListener('click', chooseFolder);
     $('#btn-reconnect').addEventListener('click', reconnectFolder);
     $('#btn-disconnect').addEventListener('click', disconnectFolder);
-    $('#btn-download-tx').addEventListener('click', () => download(TX_FILE, txToCSV()));
-    $('#btn-download-budgets').addEventListener('click', () => download(BUDGET_FILE, budgetsToCSV()));
+    $('#btn-download-tx').addEventListener('click', () => exportFiles('tx'));
+    $('#btn-download-budgets').addEventListener('click', () => exportFiles('budgets'));
+
+    // Export menu
+    const menu = $('#export-menu'), exportBtn = $('#btn-export');
+    const setMenu = open => { menu.hidden = !open; exportBtn.setAttribute('aria-expanded', String(open)); };
+    exportBtn.addEventListener('click', e => { e.stopPropagation(); setMenu(menu.hidden); });
+    menu.addEventListener('click', e => {
+      const b = e.target.closest('[data-export]');
+      if (b) { setMenu(false); exportFiles(b.dataset.export); }
+    });
+    document.addEventListener('click', e => { if (!e.target.closest('.export-wrap')) setMenu(false); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
     $('#btn-import-tx').addEventListener('click', startImport);
     $('#btn-import-budgets').addEventListener('click', async () => {
       const f = await pickFile();

@@ -47,8 +47,10 @@ How the files are saved depends on your browser:
   folder and rewrites them automatically every time you make a change. After a browser
   restart you'll be asked to click **Reconnect** once to re-approve access.
 - **Safari, Firefox, mobile browsers:** these can't write to a folder, so the app keeps a
-  copy in the browser's local storage between visits. Use **Download** on the Data tab to
-  save your CSVs and **Import / Open** to load them back.
+  copy in the browser's local storage between visits. Click **Export** in the top bar to
+  download your CSVs (all files, or just transactions or budgets) and **Import / Open** on
+  the Data tab to load them back. The status next to the button says **Not exported** (and
+  the button gets a dot) whenever you have changes that aren't in an exported file yet.
 
 See [`examples/`](examples) for sample files, including a typical bank export.
 
